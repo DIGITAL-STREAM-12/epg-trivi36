@@ -32,5 +32,5 @@ jobs:
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add epg_trivision_semanal.xml epg_trivision_semanal.json
-          git diff --quiet && git diff --staged --quiet || (git commit -m "Actualización automática EPG Trivision [skip ci]" && git push origin HEAD)
+          git add epg_trivision_diario.xml
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Actualización automática EPG diario Trivision [skip ci]" && git push origin HEAD)
