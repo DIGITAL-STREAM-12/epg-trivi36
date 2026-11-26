@@ -1,0 +1,51 @@
+<?xml version='1.0' encoding='utf-8'?>
+<tv generator-info-name="Trivision-Daily-EPG" source-info-url="https://trivisioncr.com/programacion/">
+  <channel id="trivision.cr">
+    <display-name lang="es">Trivisión</display-name>
+  </channel>
+  <programme start="20261126000000 -0600" stop="20261126003000 -0600" channel="trivision.cr">
+    <title lang="es">Repetición Tardeando</title>
+  </programme>
+  <programme start="20261126003000 -0600" stop="20261126013000 -0600" channel="trivision.cr">
+    <title lang="es">Perdidos En El Espacio</title>
+  </programme>
+  <programme start="20261126013000 -0600" stop="20261126020000 -0600" channel="trivision.cr">
+    <title lang="es">Batman</title>
+  </programme>
+  <programme start="20261126020000 -0600" stop="20261126040000 -0600" channel="trivision.cr">
+    <title lang="es">El Último Cazador De Estrellas</title>
+  </programme>
+  <programme start="20261126040000 -0600" stop="20261126050000 -0600" channel="trivision.cr">
+    <title lang="es">Música En Español</title>
+  </programme>
+  <programme start="20261126050000 -0600" stop="20261126070000 -0600" channel="trivision.cr">
+    <title lang="es">Rep. Noticiero</title>
+  </programme>
+  <programme start="20261126070000 -0600" stop="20261126090000 -0600" channel="trivision.cr">
+    <title lang="es">Rep. Nuestro Programa</title>
+  </programme>
+  <programme start="20261126090000 -0600" stop="20261126100000 -0600" channel="trivision.cr">
+    <title lang="es">Misión Imposible</title>
+  </programme>
+  <programme start="20261126100000 -0600" stop="20261126113000 -0600" channel="trivision.cr">
+    <title lang="es">Tardeando Por La Mañana</title>
+  </programme>
+  <programme start="20261126113000 -0600" stop="20261126150000 -0600" channel="trivision.cr">
+    <title lang="es">Noticias Trivisión</title>
+  </programme>
+  <programme start="20261126150000 -0600" stop="20261126170000 -0600" channel="trivision.cr">
+    <title lang="es">Nuestro Programa</title>
+  </programme>
+  <programme start="20261126170000 -0600" stop="20261126190000 -0600" channel="trivision.cr">
+    <title lang="es">Noticiero Estelar Trivisión</title>
+  </programme>
+  <programme start="20261126190000 -0600" stop="20261126210000 -0600" channel="trivision.cr">
+    <title lang="es">Rep. Nuestro Programa</title>
+  </programme>
+  <programme start="20261126210000 -0600" stop="20261126230000 -0600" channel="trivision.cr">
+    <title lang="es">Rep. Noticiero Estelar</title>
+  </programme>
+  <programme start="20261126230000 -0600" stop="20261127000000 -0600" channel="trivision.cr">
+    <title lang="es">Repetición Tardeando</title>
+  </programme>
+</tv>
