@@ -44,7 +44,7 @@ def parsear_hora_24h(texto_hora: str) -> Optional[tuple[int, int]]:
 
 
 def obtener_parrilla_trivision() -> list[dict]:
-    """Extrae la programación desde la web de Trivisión de forma robusta."""
+    """Extrae la programación del día actual desde la web de Trivisión."""
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
@@ -53,7 +53,7 @@ def obtener_parrilla_trivision() -> list[dict]:
 
     soup = BeautifulSoup(resp.text, "html.parser")
     
-    # Acotamos la búsqueda a contenedores de texto principales para evitar duplicados masivos en divs anidados
+    # Contenedores de texto principales para evitar duplicados en divs anidados
     candidatos_elementos = soup.find_all(["p", "li", "td", "h3", "h4", "strong"])
     
     programas_crudos = []
@@ -72,7 +72,6 @@ def obtener_parrilla_trivision() -> list[dict]:
             if tiempo_parsed:
                 titulo = texto.replace(hora_extraida, "").strip("-:– \t\n")
                 
-                # Si el bloque solo contenía la hora, buscamos en el siguiente hermano
                 if len(titulo) < 3:
                     siguiente = el.find_next_sibling()
                     if siguiente:
@@ -114,42 +113,38 @@ def obtener_parrilla_trivision() -> list[dict]:
         print("[Aviso] No se detectaron programas automáticamente en el HTML.")
         return []
 
-    # Generar la parrilla para los próximos 7 días con cálculo correcto de horas de fin
+    # Generar la parrilla ÚNICAMENTE para el día actual
     hoy = datetime.now(TZ_CR).replace(hour=0, minute=0, second=0, microsecond=0)
     resultado = []
 
-    for dia_idx in range(7):
-        fecha_base = hoy + timedelta(days=dia_idx)
-        
-        for idx, item in enumerate(programas_crudos):
-            h_ini, m_ini = item["inicio_24"]
-            dt_inicio = fecha_base.replace(hour=h_ini, minute=m_ini)
+    for idx, item in enumerate(programas_crudos):
+        h_ini, m_ini = item["inicio_24"]
+        dt_inicio = hoy.replace(hour=h_ini, minute=m_ini)
 
-            # Determinar hora de fin basada en el siguiente programa del día
-            if idx + 1 < len(programas_crudos):
-                h_sig, m_sig = programas_crudos[idx + 1]["inicio_24"]
-                dt_fin = fecha_base.replace(hour=h_sig, minute=m_sig)
-                if dt_fin <= dt_inicio:
-                    dt_fin += timedelta(days=1)
-            else:
-                # Si es el último programa del día, asume que termina a la medianoche o dura 1 hora por defecto
-                dt_fin = dt_inicio + timedelta(hours=1)
+        # Determinar hora de fin basada en el siguiente programa del día
+        if idx + 1 < len(programas_crudos):
+            h_sig, m_sig = programas_crudos[idx + 1]["inicio_24"]
+            dt_fin = hoy.replace(hour=h_sig, minute=m_sig)
+            if dt_fin <= dt_inicio:
+                dt_fin += timedelta(days=1)
+        else:
+            dt_fin = dt_inicio + timedelta(hours=1)
 
-            resultado.append({
-                "channel_id": CHANNEL_ID,
-                "programa": item["programa"],
-                "inicio_iso": dt_inicio.isoformat(),
-                "fin_iso": dt_fin.isoformat(),
-                "inicio_xmltv": dt_inicio.strftime("%Y%m%d%H%M%S %z"),
-                "fin_xmltv": dt_fin.strftime("%Y%m%d%H%M%S %z"),
-            })
+        resultado.append({
+            "channel_id": CHANNEL_ID,
+            "programa": item["programa"],
+            "inicio_iso": dt_inicio.isoformat(),
+            "fin_iso": dt_fin.isoformat(),
+            "inicio_xmltv": dt_inicio.strftime("%Y%m%d%H%M%S %z"),
+            "fin_xmltv": dt_fin.strftime("%Y%m%d%H%M%S %z"),
+        })
 
     return resultado
 
 
-def guardar_xmltv(programas: list[dict], ruta_archivo: str = "epg_trivision_semanal.xml") -> None:
+def guardar_xmltv(programas: list[dict], ruta_archivo: str = "epg_trivision_diario.xml") -> None:
     tv = ET.Element("tv", {
-        "generator-info-name": "Trivision-Weekly-EPG",
+        "generator-info-name": "Trivision-Daily-EPG",
         "source-info-url": URL_PROGRAMACION
     })
 
@@ -166,7 +161,6 @@ def guardar_xmltv(programas: list[dict], ruta_archivo: str = "epg_trivision_sema
         title = ET.SubElement(prog, "title", {"lang": "es"})
         title.text = item["programa"]
 
-    # Compatibilidad segura para ET.indent en versiones antiguas de Python
     if hasattr(ET, "indent"):
         ET.indent(tv, space=" ")
 
@@ -175,10 +169,10 @@ def guardar_xmltv(programas: list[dict], ruta_archivo: str = "epg_trivision_sema
 
 
 if __name__ == "__main__":
-    print("Obteniendo programación de Trivisión...")
+    print("Obteniendo programación diaria de Trivisión...")
     parrilla = obtener_parrilla_trivision()
     if parrilla:
-        guardar_xmltv(parrilla, "epg_trivision_semanal.xml")
-        print(f"¡Éxito! EPG generado con {len(parrilla)} programas en 'epg_trivision_semanal.xml'.")
+        guardar_xmltv(parrilla, "epg_trivision_diario.xml")
+        print(f"¡Éxito! EPG diario generado con {len(parrilla)} programas en 'epg_trivision_diario.xml'.")
     else:
         print("No se pudo generar el EPG. Comprueba la estructura de la web.")
