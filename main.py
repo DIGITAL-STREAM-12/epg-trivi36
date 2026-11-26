@@ -53,8 +53,8 @@ def obtener_parrilla_trivision() -> list[dict]:
 
     soup = BeautifulSoup(resp.text, "html.parser")
     
-    # Buscamos elementos comunes donde suele estar la programación
-    candidatos_elementos = soup.find_all(["p", "div", "li", "td", "span", "h3", "h4", "strong"])
+    # Acotamos la búsqueda a contenedores de texto principales para evitar duplicados masivos en divs anidados
+    candidatos_elementos = soup.find_all(["p", "li", "td", "h3", "h4", "strong"])
     
     programas_crudos = []
     vistos = set()
@@ -87,7 +87,7 @@ def obtener_parrilla_trivision() -> list[dict]:
                             "programa": titulo
                         })
 
-    # Respaldo basado en líneas de texto si el filtrado por etiquetas no encuentra suficientes
+    # Respaldo basado en líneas de texto si el filtrado anterior no encuentra suficientes
     if not programas_crudos:
         main = soup.find("main") or soup.body or soup
         lineas = [re.sub(r"\s+", " ", txt).strip() for txt in main.stripped_strings if re.sub(r"\s+", " ", txt).strip()]
@@ -107,29 +107,33 @@ def obtener_parrilla_trivision() -> list[dict]:
                         vistos.add(clave)
                         programas_crudos.append({"inicio_24": inicio, "programa": titulo})
 
+    # Ordenar estrictamente por hora y minuto cronológico
     programas_crudos.sort(key=lambda x: (x["inicio_24"][0], x["inicio_24"][1]))
 
     if not programas_crudos:
         print("[Aviso] No se detectaron programas automáticamente en el HTML.")
         return []
 
-    # Generar la parrilla extendida para los próximos 7 días a partir de hoy
+    # Generar la parrilla para los próximos 7 días con cálculo correcto de horas de fin
     hoy = datetime.now(TZ_CR).replace(hour=0, minute=0, second=0, microsecond=0)
     resultado = []
 
     for dia_idx in range(7):
         fecha_base = hoy + timedelta(days=dia_idx)
+        
         for idx, item in enumerate(programas_crudos):
             h_ini, m_ini = item["inicio_24"]
             dt_inicio = fecha_base.replace(hour=h_ini, minute=m_ini)
 
+            # Determinar hora de fin basada en el siguiente programa del día
             if idx + 1 < len(programas_crudos):
                 h_sig, m_sig = programas_crudos[idx + 1]["inicio_24"]
                 dt_fin = fecha_base.replace(hour=h_sig, minute=m_sig)
                 if dt_fin <= dt_inicio:
                     dt_fin += timedelta(days=1)
             else:
-                dt_fin = (fecha_base + timedelta(days=1)).replace(hour=0, minute=0)
+                # Si es el último programa del día, asume que termina a la medianoche o dura 1 hora por defecto
+                dt_fin = dt_inicio + timedelta(hours=1)
 
             resultado.append({
                 "channel_id": CHANNEL_ID,
@@ -162,7 +166,10 @@ def guardar_xmltv(programas: list[dict], ruta_archivo: str = "epg_trivision_sema
         title = ET.SubElement(prog, "title", {"lang": "es"})
         title.text = item["programa"]
 
-    ET.indent(tv, space=" ")
+    # Compatibilidad segura para ET.indent en versiones antiguas de Python
+    if hasattr(ET, "indent"):
+        ET.indent(tv, space=" ")
+
     tree = ET.ElementTree(tv)
     tree.write(ruta_archivo, encoding="utf-8", xml_declaration=True)
 
