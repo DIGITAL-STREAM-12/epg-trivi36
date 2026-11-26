@@ -10,14 +10,13 @@ TZ_CR = timezone(timedelta(hours=-6))
 CHANNEL_ID = "trivision.cr"
 CHANNEL_NAME = "Trivisión"
 
-# Patrón flexible para hora de 24h (ej: 18:00) o 12h (ej: 6:00 pm, 6:00 a.m.)
+# Patrón flexible para hora (ej: 18:00, 6:00 pm, 06:00 a.m.)
 PATRON_HORA = re.compile(
     r"\b(\d{1,2}:\d{2})\s*(am|pm|a\.m\.|p\.m\.|m|md)?\b", re.IGNORECASE
 )
 
 
 def parsear_hora_24h(texto_hora: str) -> Optional[tuple[int, int]]:
-    """Convierte texto de hora a formato (hora_24, minuto)."""
     m = PATRON_HORA.search(texto_hora.strip())
     if not m:
         return None
@@ -44,7 +43,6 @@ def parsear_hora_24h(texto_hora: str) -> Optional[tuple[int, int]]:
 
 
 def obtener_parrilla_trivision() -> list[dict]:
-    """Extrae la programación del día actual desde la web de Trivisión."""
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
@@ -53,67 +51,47 @@ def obtener_parrilla_trivision() -> list[dict]:
 
     soup = BeautifulSoup(resp.text, "html.parser")
     
-    # Contenedores de texto principales para evitar duplicados en divs anidados
-    candidatos_elementos = soup.find_all(["p", "li", "td", "h3", "h4", "strong"])
-    
+    # Extraemos directamente todas las líneas de texto visibles del cuerpo o contenedor principal
+    main_container = soup.find("main") or soup.find("article") or soup.body or soup
+    lineas = [
+        re.sub(r"\s+", " ", txt).strip()
+        for txt in main_container.stripped_strings
+        if re.sub(r"\s+", " ", txt).strip()
+    ]
+
     programas_crudos = []
     vistos = set()
 
-    for el in candidatos_elementos:
-        texto = el.get_text(strip=True)
-        if not texto:
-            continue
+    # Barrido secuencial de líneas para asociar hora con el texto de programa más cercano
+    for i, linea in enumerate(lineas):
+        inicio = parsear_hora_24h(linea)
+        if inicio:
+            # Buscar un título en las líneas siguientes que no sea una hora
+            titulo = None
+            for offset in range(1, 4):
+                if i + offset < len(lineas):
+                    candidato = lineas[i + offset]
+                    if not PATRON_HORA.search(candidato) and len(candidato) > 1:
+                        titulo = candidato
+                        break
             
-        match_hora = PATRON_HORA.search(texto)
-        if match_hora:
-            hora_extraida = match_hora.group(0)
-            tiempo_parsed = parsear_hora_24h(hora_extraida)
-            
-            if tiempo_parsed:
-                titulo = texto.replace(hora_extraida, "").strip("-:– \t\n")
-                
-                if len(titulo) < 3:
-                    siguiente = el.find_next_sibling()
-                    if siguiente:
-                        titulo = siguiente.get_text(strip=True)
-                
-                if titulo and len(titulo) >= 2:
-                    clave = (tiempo_parsed, titulo.lower())
-                    if clave not in vistos:
-                        vistos.add(clave)
-                        programas_crudos.append({
-                            "inicio_24": tiempo_parsed,
-                            "programa": titulo
-                        })
+            if titulo:
+                clave = (inicio, titulo.lower())
+                if clave not in vistos:
+                    vistos.add(clave)
+                    programas_crudos.append({
+                        "inicio_24": inicio,
+                        "programa": titulo
+                    })
 
-    # Respaldo basado en líneas de texto si el filtrado anterior no encuentra suficientes
-    if not programas_crudos:
-        main = soup.find("main") or soup.body or soup
-        lineas = [re.sub(r"\s+", " ", txt).strip() for txt in main.stripped_strings if re.sub(r"\s+", " ", txt).strip()]
-        for i, linea in enumerate(lineas):
-            inicio = parsear_hora_24h(linea)
-            if inicio:
-                titulo = None
-                for offset in range(1, 4):
-                    if i + offset < len(lineas):
-                        candidato = lineas[i + offset]
-                        if not PATRON_HORA.search(candidato):
-                            titulo = candidato
-                            break
-                if titulo:
-                    clave = (inicio, titulo.lower())
-                    if clave not in vistos:
-                        vistos.add(clave)
-                        programas_crudos.append({"inicio_24": inicio, "programa": titulo})
-
-    # Ordenar estrictamente por hora y minuto cronológico
+    # Ordenar estrictamente por hora
     programas_crudos.sort(key=lambda x: (x["inicio_24"][0], x["inicio_24"][1]))
 
     if not programas_crudos:
         print("[Aviso] No se detectaron programas automáticamente en el HTML.")
         return []
 
-    # Generar la parrilla ÚNICAMENTE para el día actual
+    # Generar la parrilla para el día actual
     hoy = datetime.now(TZ_CR).replace(hour=0, minute=0, second=0, microsecond=0)
     resultado = []
 
@@ -121,7 +99,6 @@ def obtener_parrilla_trivision() -> list[dict]:
         h_ini, m_ini = item["inicio_24"]
         dt_inicio = hoy.replace(hour=h_ini, minute=m_ini)
 
-        # Determinar hora de fin basada en el siguiente programa del día
         if idx + 1 < len(programas_crudos):
             h_sig, m_sig = programas_crudos[idx + 1]["inicio_24"]
             dt_fin = hoy.replace(hour=h_sig, minute=m_sig)
