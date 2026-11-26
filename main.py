@@ -1,5 +1,4 @@
 from datetime import datetime, timedelta, timezone
-import json
 import re
 from typing import Optional
 import xml.etree.ElementTree as ET
@@ -7,18 +6,18 @@ from bs4 import BeautifulSoup
 import requests
 
 URL_PROGRAMACION = "https://trivisioncr.com/programacion/"
-
 TZ_CR = timezone(timedelta(hours=-6))
 CHANNEL_ID = "trivision.cr"
 CHANNEL_NAME = "Trivisión"
 
+# Patrón flexible para hora de 24h (ej: 18:00) o 12h (ej: 6:00 pm, 6:00 a.m.)
 PATRON_HORA = re.compile(
     r"\b(\d{1,2}:\d{2})\s*(am|pm|a\.m\.|p\.m\.|m|md)?\b", re.IGNORECASE
 )
 
 
 def parsear_hora_24h(texto_hora: str) -> Optional[tuple[int, int]]:
-    """Convierte horas en texto a formato (hora_24, minuto)."""
+    """Convierte texto de hora a formato (hora_24, minuto)."""
     m = PATRON_HORA.search(texto_hora.strip())
     if not m:
         return None
@@ -28,7 +27,9 @@ def parsear_hora_24h(texto_hora: str) -> Optional[tuple[int, int]]:
     hora, minuto = map(int, hh_mm.split(":"))
 
     if not periodo:
-        return (hora, minuto)
+        if 0 <= hora <= 23 and 0 <= minuto <= 59:
+            return (hora, minuto)
+        return None
 
     if periodo in ("m", "md"):
         hora_24 = 12 if hora == 12 else hora
@@ -37,123 +38,127 @@ def parsear_hora_24h(texto_hora: str) -> Optional[tuple[int, int]]:
     else:  # pm
         hora_24 = hora if hora == 12 else hora + 12
 
-    return (hora_24, minuto)
+    if 0 <= hora_24 <= 23 and 0 <= minuto <= 59:
+        return (hora_24, minuto)
+    return None
 
 
 def obtener_parrilla_trivision() -> list[dict]:
-    """Extrae la programación desde la web de Trivisión."""
-    resp = requests.get(
-        URL_PROGRAMACION,
-        headers={"User-Agent": "Mozilla/5.0 (compatible; TrivisionEPGBot/1.0)"},
-        timeout=20,
-    )
+    """Extrae la programación desde la web de Trivisión de forma robusta."""
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+    resp = requests.get(URL_PROGRAMACION, headers=headers, timeout=20)
     resp.raise_for_status()
 
     soup = BeautifulSoup(resp.text, "html.parser")
-    main = soup.find("main") or soup.body or soup
-
-    lineas = [
-        re.sub(r"\s+", " ", txt).strip()
-        for txt in main.stripped_strings
-        if re.sub(r"\s+", " ", txt).strip()
-    ]
-
-    programas = []
+    
+    # Buscamos elementos comunes donde suele estar la programación
+    candidatos_elementos = soup.find_all(["p", "div", "li", "td", "span", "h3", "h4", "strong"])
+    
+    programas_crudos = []
     vistos = set()
-    hoy = datetime.now(TZ_CR).replace(hour=0, minute=0, second=0, microsecond=0)
 
-    # Lógica de extracción adaptada para leer bloques de hora y título
-    for i, linea in enumerate(lineas):
-        inicio = parsear_hora_24h(linea)
-        if inicio:
-            # Buscar el título del programa cercano
-            titulo = None
-            for offset in range(1, 4):
-                if i + offset < len(lineas):
-                    candidato = lineas[i + offset]
-                    if not PATRON_HORA.search(candidato):
-                        titulo = candidato
-                        break
+    for el in candidatos_elementos:
+        texto = el.get_text(strip=True)
+        if not texto:
+            continue
             
-            if titulo:
-                clave = (inicio, titulo.lower())
-                if clave not in vistos:
-                    vistos.add(clave)
-                    programas.append(
-                        {
-                            "inicio_24": inicio,
-                            "programa": titulo,
-                        }
-                    )
+        match_hora = PATRON_HORA.search(texto)
+        if match_hora:
+            hora_extraida = match_hora.group(0)
+            tiempo_parsed = parsear_hora_24h(hora_extraida)
+            
+            if tiempo_parsed:
+                titulo = texto.replace(hora_extraida, "").strip("-:– \t\n")
+                
+                # Si el bloque solo contenía la hora, buscamos en el siguiente hermano
+                if len(titulo) < 3:
+                    siguiente = el.find_next_sibling()
+                    if siguiente:
+                        titulo = siguiente.get_text(strip=True)
+                
+                if titulo and len(titulo) >= 2:
+                    clave = (tiempo_parsed, titulo.lower())
+                    if clave not in vistos:
+                        vistos.add(clave)
+                        programas_crudos.append({
+                            "inicio_24": tiempo_parsed,
+                            "programa": titulo
+                        })
 
-    programas.sort(key=lambda item: item["inicio_24"])
+    # Respaldo basado en líneas de texto si el filtrado por etiquetas no encuentra suficientes
+    if not programas_crudos:
+        main = soup.find("main") or soup.body or soup
+        lineas = [re.sub(r"\s+", " ", txt).strip() for txt in main.stripped_strings if re.sub(r"\s+", " ", txt).strip()]
+        for i, linea in enumerate(lineas):
+            inicio = parsear_hora_24h(linea)
+            if inicio:
+                titulo = None
+                for offset in range(1, 4):
+                    if i + offset < len(lineas):
+                        candidato = lineas[i + offset]
+                        if not PATRON_HORA.search(candidato):
+                            titulo = candidato
+                            break
+                if titulo:
+                    clave = (inicio, titulo.lower())
+                    if clave not in vistos:
+                        vistos.add(clave)
+                        programas_crudos.append({"inicio_24": inicio, "programa": titulo})
 
-    # Generamos la programación para los próximos 7 días basada en la plantilla extraída
+    programas_crudos.sort(key=lambda x: (x["inicio_24"][0], x["inicio_24"][1]))
+
+    if not programas_crudos:
+        print("[Aviso] No se detectaron programas automáticamente en el HTML.")
+        return []
+
+    # Generar la parrilla extendida para los próximos 7 días a partir de hoy
+    hoy = datetime.now(TZ_CR).replace(hour=0, minute=0, second=0, microsecond=0)
     resultado = []
+
     for dia_idx in range(7):
         fecha_base = hoy + timedelta(days=dia_idx)
-        
-        for idx, item in enumerate(programas):
+        for idx, item in enumerate(programas_crudos):
             h_ini, m_ini = item["inicio_24"]
             dt_inicio = fecha_base.replace(hour=h_ini, minute=m_ini)
 
-            if idx + 1 < len(programas):
-                h_sig, m_sig = programas[idx + 1]["inicio_24"]
+            if idx + 1 < len(programas_crudos):
+                h_sig, m_sig = programas_crudos[idx + 1]["inicio_24"]
                 dt_fin = fecha_base.replace(hour=h_sig, minute=m_sig)
                 if dt_fin <= dt_inicio:
                     dt_fin += timedelta(days=1)
             else:
                 dt_fin = (fecha_base + timedelta(days=1)).replace(hour=0, minute=0)
 
-            resultado.append(
-                {
-                    "channel_id": CHANNEL_ID,
-                    "programa": item["programa"],
-                    "inicio_iso": dt_inicio.isoformat(),
-                    "fin_iso": dt_fin.isoformat(),
-                    "inicio_xmltv": dt_inicio.strftime("%Y%m%d%H%M%S %z"),
-                    "fin_xmltv": dt_fin.strftime("%Y%m%d%H%M%S %z"),
-                }
-            )
+            resultado.append({
+                "channel_id": CHANNEL_ID,
+                "programa": item["programa"],
+                "inicio_iso": dt_inicio.isoformat(),
+                "fin_iso": dt_fin.isoformat(),
+                "inicio_xmltv": dt_inicio.strftime("%Y%m%d%H%M%S %z"),
+                "fin_xmltv": dt_fin.strftime("%Y%m%d%H%M%S %z"),
+            })
 
     return resultado
 
 
-def guardar_json_semanal(programas: list[dict], ruta_archivo: str) -> None:
-    payload = {
-        "canal": CHANNEL_NAME,
-        "channel_id": CHANNEL_ID,
-        "generado_en": datetime.now(TZ_CR).isoformat(),
-        "total_programas": len(programas),
-        "programacion": programas,
-    }
-    with open(ruta_archivo, "w", encoding="utf-8") as f:
-        json.dump(payload, f, ensure_ascii=False, indent=2)
-
-
-def guardar_xmltv_semanal(programas: list[dict], ruta_archivo: str) -> None:
-    tv = ET.Element(
-        "tv",
-        {
-            "generator-info-name": "Trivision-Weekly-EPG",
-            "source-info-url": URL_PROGRAMACION,
-        },
-    )
+def guardar_xmltv(programas: list[dict], ruta_archivo: str = "epg_trivision_semanal.xml") -> None:
+    tv = ET.Element("tv", {
+        "generator-info-name": "Trivision-Weekly-EPG",
+        "source-info-url": URL_PROGRAMACION
+    })
 
     canal = ET.SubElement(tv, "channel", {"id": CHANNEL_ID})
     display = ET.SubElement(canal, "display-name", {"lang": "es"})
     display.text = CHANNEL_NAME
 
     for item in programas:
-        prog = ET.SubElement(
-            tv,
-            "programme",
-            {
-                "start": item["inicio_xmltv"],
-                "stop": item["fin_xmltv"],
-                "channel": CHANNEL_ID,
-            },
-        )
+        prog = ET.SubElement(tv, "programme", {
+            "start": item["inicio_xmltv"],
+            "stop": item["fin_xmltv"],
+            "channel": CHANNEL_ID
+        })
         title = ET.SubElement(prog, "title", {"lang": "es"})
         title.text = item["programa"]
 
@@ -163,9 +168,10 @@ def guardar_xmltv_semanal(programas: list[dict], ruta_archivo: str) -> None:
 
 
 if __name__ == "__main__":
-    parrilla_semana = obtener_parrilla_trivision()
-    guardar_xmltv_semanal(parrilla_semana, "epg_trivision_semanal.xml")
-    guardar_json_semanal(parrilla_semana, "epg_trivision_semanal.json")
-    print(
-        f"Generado EPG semanal de Trivisión con {len(parrilla_semana)} programas en epg_trivision_semanal.xml"
-    )
+    print("Obteniendo programación de Trivisión...")
+    parrilla = obtener_parrilla_trivision()
+    if parrilla:
+        guardar_xmltv(parrilla, "epg_trivision_semanal.xml")
+        print(f"¡Éxito! EPG generado con {len(parrilla)} programas en 'epg_trivision_semanal.xml'.")
+    else:
+        print("No se pudo generar el EPG. Comprueba la estructura de la web.")
