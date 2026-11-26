@@ -1,6 +1,0 @@
-<?xml version='1.0' encoding='utf-8'?>
-<tv generator-info-name="Trivision-Weekly-EPG" source-info-url="https://trivisioncr.com/programacion/">
- <channel id="trivision.cr">
-  <display-name lang="es">Trivisión</display-name>
- </channel>
-</tv>
