@@ -10,6 +10,7 @@ TZ_CR = timezone(timedelta(hours=-6))
 CHANNEL_ID = "trivision.cr"
 CHANNEL_NAME = "Trivisión"
 ARCHIVO_SALIDA = "epg_trivision_diario.xml"
+DIAS_A_RECOPILAR = 3
 
 DIAS_SEMANA = [
     "Lunes",
@@ -31,8 +32,8 @@ def normalizar_texto(texto: str) -> str:
     )
 
 
-def obtener_parrilla_trivision() -> list[dict]:
-    """Extrae la programación del día actual desde el objeto JS tvProgramacion."""
+def obtener_parrilla_trivision(dias: int = DIAS_A_RECOPILAR) -> list[dict]:
+    """Extrae la programación de los próximos N días desde el objeto JS tvProgramacion."""
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -59,15 +60,6 @@ def obtener_parrilla_trivision() -> list[dict]:
     )
     parrilla_por_dia = {normalizar_texto(dia): contenido for dia, contenido in bloques}
 
-    hoy = datetime.now(TZ_CR).replace(hour=0, minute=0, second=0, microsecond=0)
-    dia_actual = DIAS_SEMANA[hoy.weekday()]
-    clave_dia = normalizar_texto(dia_actual)
-
-    bloque_hoy = parrilla_por_dia.get(clave_dia)
-    if not bloque_hoy:
-        print(f"[Error] No se encontró programación para el día '{dia_actual}'.")
-        return []
-
     patron_item = re.compile(
         r'hora\s*:\s*["\'](\d{1,2}:\d{2})["\']\s*,\s*'
         r"duracion\s*:\s*(\d+)\s*,\s*"
@@ -75,37 +67,49 @@ def obtener_parrilla_trivision() -> list[dict]:
         re.DOTALL,
     )
 
-    programas_crudos = []
-    for hora_str, duracion_str, _, titulo in patron_item.findall(bloque_hoy):
-        hora, minuto = map(int, hora_str.split(":"))
-        duracion_min = int(duracion_str)
-        titulo_limpio = re.sub(r"\s+", " ", titulo).strip()
+    hoy = datetime.now(TZ_CR).replace(hour=0, minute=0, second=0, microsecond=0)
+    resultado = []
 
-        if 0 <= hora <= 23 and 0 <= minuto <= 59 and duracion_min > 0 and titulo_limpio:
-            programas_crudos.append(
+    for offset in range(dias):
+        fecha_dia = hoy + timedelta(days=offset)
+        dia_nombre = DIAS_SEMANA[fecha_dia.weekday()]
+        clave_dia = normalizar_texto(dia_nombre)
+
+        bloque_dia = parrilla_por_dia.get(clave_dia)
+        if not bloque_dia:
+            print(f"[Aviso] No se encontró programación para el día '{dia_nombre}'.")
+            continue
+
+        programas_crudos = []
+        for hora_str, duracion_str, _, titulo in patron_item.findall(bloque_dia):
+            hora, minuto = map(int, hora_str.split(":"))
+            duracion_min = int(duracion_str)
+            titulo_limpio = re.sub(r"\s+", " ", titulo).strip()
+
+            if 0 <= hora <= 23 and 0 <= minuto <= 59 and duracion_min > 0 and titulo_limpio:
+                programas_crudos.append(
+                    {
+                        "hora": hora,
+                        "minuto": minuto,
+                        "duracion": duracion_min,
+                        "programa": titulo_limpio,
+                    }
+                )
+
+        programas_crudos.sort(key=lambda x: (x["hora"], x["minuto"]))
+
+        for item in programas_crudos:
+            dt_inicio = fecha_dia.replace(hour=item["hora"], minute=item["minuto"])
+            dt_fin = dt_inicio + timedelta(minutes=item["duracion"])
+
+            resultado.append(
                 {
-                    "hora": hora,
-                    "minuto": minuto,
-                    "duracion": duracion_min,
-                    "programa": titulo_limpio,
+                    "channel_id": CHANNEL_ID,
+                    "programa": item["programa"],
+                    "inicio_xmltv": dt_inicio.strftime("%Y%m%d%H%M%S %z"),
+                    "fin_xmltv": dt_fin.strftime("%Y%m%d%H%M%S %z"),
                 }
             )
-
-    programas_crudos.sort(key=lambda x: (x["hora"], x["minuto"]))
-
-    resultado = []
-    for item in programas_crudos:
-        dt_inicio = hoy.replace(hour=item["hora"], minute=item["minuto"])
-        dt_fin = dt_inicio + timedelta(minutes=item["duracion"])
-
-        resultado.append(
-            {
-                "channel_id": CHANNEL_ID,
-                "programa": item["programa"],
-                "inicio_xmltv": dt_inicio.strftime("%Y%m%d%H%M%S %z"),
-                "fin_xmltv": dt_fin.strftime("%Y%m%d%H%M%S %z"),
-            }
-        )
 
     return resultado
 
@@ -114,7 +118,7 @@ def guardar_xmltv(programas: list[dict], ruta_archivo: str = ARCHIVO_SALIDA) -> 
     tv = ET.Element(
         "tv",
         {
-            "generator-info-name": "Trivision-Daily-EPG",
+            "generator-info-name": "Trivision-EPG",
             "source-info-url": URL_PROGRAMACION,
         },
     )
@@ -144,8 +148,8 @@ def guardar_xmltv(programas: list[dict], ruta_archivo: str = ARCHIVO_SALIDA) -> 
 
 
 if __name__ == "__main__":
-    print("Obteniendo programación diaria de Trivisión...")
-    parrilla = obtener_parrilla_trivision()
+    print(f"Obteniendo programación de {DIAS_A_RECOPILAR} días de Trivisión...")
+    parrilla = obtener_parrilla_trivision(DIAS_A_RECOPILAR)
     if not parrilla:
         print("No se pudo generar el EPG. Revisa la estructura de la web.")
         sys.exit(1)
